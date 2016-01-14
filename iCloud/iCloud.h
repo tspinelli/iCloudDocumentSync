@@ -421,7 +421,6 @@ NS_CLASS_AVAILABLE_IOS(6_0) @interface iCloud : NSObject
  @param fileNames A list of the file names (NSString) now in the app's iCloud documents directory */
 - (void)iCloudFilesDidChange:(NSMutableArray *)files withNewFileNames:(NSMutableArray *)fileNames;
 
-
 /** Sent to the delegate where there is a conflict between a local file and an iCloud file during an upload or download
  
  @discussion When both files have the same modification date and file content, iCloud Document Sync will not be able to automatically determine how to handle the conflict. As a result, this delegate method is called to pass the file information to the delegate which should be able to appropriately handle and resolve the conflict. The delegate should, if needed, present the user with a conflict resolution interface. iCloud Document Sync does not need to know the result of the attempted resolution, it will continue to upload all files which are not conflicting. 

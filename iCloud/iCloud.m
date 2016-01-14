@@ -58,7 +58,8 @@
     [self.notificationCenter removeObserver:self];
 }
 
-- (void)setupiCloudDocumentSyncWithUbiquityContainer:(NSString *)containerID {
+- (void)setupiCloudDocumentSyncWithUbiquityContainer:(NSString *)containerID
+{
     // Setup the File Manager
     if (_fileManager == nil) _fileManager = [NSFileManager defaultManager];
     
@@ -99,7 +100,7 @@
             NSLog(@"[iCloud] Ubiquity Container Created and Ready");
         } else {
             NSString *appName = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"];
-            NSLog(@"[iCloud] The systemt could not retrieve a valid iCloud container URL. iCloud is not available. iCloud may be unavailable for a number of reasons:\n• The device has not yet been configured with an iCloud account, or the Documents & Data option is disabled\n• Your app, %@, does not have properly configured entitlements\n• Your app, %@, has a provisioning profile which does not support iCloud.\nGo to http://bit.ly/18HkxPp for more information on setting up iCloud", appName, appName);
+            NSLog(@"[iCloud] The system could not retrieve a valid iCloud container URL. iCloud is not available. iCloud may be unavailable for a number of reasons:\n• The device has not yet been configured with an iCloud account, or the Documents & Data option is disabled\n• Your app, %@, does not have properly configured entitlements\n• Your app, %@, has a provisioning profile which does not support iCloud.\nGo to http://bit.ly/18HkxPp for more information on setting up iCloud", appName, appName);
             
             if ([self.delegate respondsToSelector:@selector(iCloudAvailabilityDidChangeToState:withUbiquityToken:withUbiquityContainer:)])
                 [self.delegate iCloudAvailabilityDidChangeToState:NO withUbiquityToken:nil withUbiquityContainer:self.ubiquityContainer];
@@ -288,9 +289,7 @@
             
             if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusDownloaded]) {
                 // File will be updated soon
-            }
-            
-            if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusCurrent]) {
+            } else if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusCurrent]) {
                 // Add the file metadata and file names to arrays
                 [discoveredFiles addObject:result];
                 [names addObject:[result valueForAttribute:NSMetadataItemFSNameKey]];
@@ -309,6 +308,8 @@
                 if (error) {
                     if (self.verboseLogging == YES) NSLog(@"[iCloud] Ubiquitous item failed to start downloading with error: %@", error);
                 }
+            } else {
+                NSLog(@"test fileStatus: %@ - %@",fileStatus,[fileURL path]);
             }
         }];
     } else {
@@ -453,7 +454,14 @@
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0ul), ^{
         // Get the array of files in the documents directory
         NSString *documentsDirectory = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
-        NSArray *localDocuments = [self.fileManager contentsOfDirectoryAtPath:documentsDirectory error:nil];
+        NSMutableArray *localDocuments = [NSMutableArray arrayWithArray:[self.fileManager contentsOfDirectoryAtPath:documentsDirectory error:nil]];
+        NSArray *subpaths = [self.fileManager subpathsAtPath:documentsDirectory];
+        for (NSString *subpath in subpaths) {
+            NSArray *subpathFiles = [self.fileManager contentsOfDirectoryAtPath:[NSString stringWithFormat:@"%@/%@",documentsDirectory,subpath] error:nil];
+            for (NSString *file in subpathFiles) {
+                [localDocuments addObject:[NSString stringWithFormat:@"%@/%@",subpath,file]];
+            }
+        }
         
         // Log local files
         if (self.verboseLogging == YES) NSLog(@"[iCloud] Files stored locally available for uploading: %@", localDocuments);
@@ -463,7 +471,6 @@
             
             // Check to make sure the documents aren't hidden
             if (![localDocuments[item] hasPrefix:@"."]) {
-                
                 // If the file does not exist in iCloud, upload it
                 if (![self.previousQueryResults containsObject:localDocuments[item]]) {
                     // Log
@@ -474,21 +481,21 @@
                     NSURL *localURL = [NSURL fileURLWithPath:[documentsDirectory stringByAppendingPathComponent:localDocuments[item]]];
                     NSError *error;
                     
-                    BOOL success = [self.fileManager setUbiquitous:YES itemAtURL:localURL destinationURL:cloudURL error:&error];
-                    if (success == NO) {
-                        NSLog(@"[iCloud] Error while uploading document from local directory: %@",error);
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            repeatingHandler(localDocuments[item], error);
-                        });
-                    } else {
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            repeatingHandler(localDocuments[item], nil);
-                        });
+                    if (![self.fileManager isUbiquitousItemAtURL:cloudURL]) {
+                        BOOL success = [self.fileManager setUbiquitous:YES itemAtURL:localURL destinationURL:cloudURL error:&error];
+                        if (success == NO) {
+                            NSLog(@"[iCloud] Error while uploading document from local directory: %@",error);
+                            dispatch_async(dispatch_get_main_queue(), ^{
+                                repeatingHandler(localDocuments[item], error);
+                            });
+                        } else {
+                            dispatch_async(dispatch_get_main_queue(), ^{
+                                repeatingHandler(localDocuments[item], nil);
+                            });
+                        }
                     }
-                    
                 } else {
                     // Check if the local document is newer than the cloud document
-                    
                     // Log conflict
                     if (self.verboseLogging == YES) NSLog(@"[iCloud] Conflict between local file and remote file, attempting to automatically resolve");
                     
@@ -610,21 +617,22 @@
             NSURL *cloudURL = [[self ubiquitousDocumentsDirectoryURL] URLByAppendingPathComponent:documentName];
             NSURL *localURL = [NSURL fileURLWithPath:localDocument];
             NSError *error;
-            
-            BOOL success = [self.fileManager setUbiquitous:YES itemAtURL:localURL destinationURL:cloudURL error:&error];
-            if (!success) {
-                NSLog(@"[iCloud] Error while uploading document from local directory: %@", error);
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    handler(error);
-                    return;
-                });
-            } else {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    handler(nil);
-                    return;
-                });
+
+            if (![self.fileManager isUbiquitousItemAtURL:cloudURL]) {
+                BOOL success = [self.fileManager setUbiquitous:YES itemAtURL:localURL destinationURL:cloudURL error:&error];
+                if (!success) {
+                    NSLog(@"[iCloud] Error while uploading document from local directory: %@", error);
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        handler(error);
+                        return;
+                    });
+                } else {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        handler(nil);
+                        return;
+                    });
+                }
             }
-            
         } else {
             // Check if the local document is newer than the cloud document
             
