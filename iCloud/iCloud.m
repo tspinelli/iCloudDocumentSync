@@ -76,6 +76,10 @@
         NSLog(@"[iCloud] Initializing Ubiquity Container");
         
         _ubiquityContainer = [[NSFileManager defaultManager] URLForUbiquityContainerIdentifier:containerID];
+        
+        // Subscribe to changes in iCloud availability (should run on main thread)
+        [_notificationCenter addObserver:self selector:@selector(checkCloudAvailability) name:NSUbiquityIdentityDidChangeNotification object:nil];
+
         if (_ubiquityContainer) {
             // We can write to the ubiquity container
             
@@ -89,8 +93,6 @@
                 // Sync and Update Documents List
                 [self enumerateCloudDocuments];
                 
-                // Subscribe to changes in iCloud availability (should run on main thread)
-                [_notificationCenter addObserver:self selector:@selector(checkCloudAvailability) name:NSUbiquityIdentityDidChangeNotification object:nil];
                 
                 if ([_delegate respondsToSelector:@selector(iCloudDidFinishInitializingWitUbiquityToken: withUbiquityContainer:)])
                     [_delegate iCloudDidFinishInitializingWitUbiquityToken:cloudToken withUbiquityContainer:_ubiquityContainer];
@@ -117,7 +119,14 @@
 #pragma mark - Basic
 
 - (BOOL)checkCloudAvailability {
+    static id previousCloudToken = nil;
     id cloudToken = [self.fileManager ubiquityIdentityToken];
+    
+    if (previousCloudToken == cloudToken) {
+        return (cloudToken)?YES:NO;
+    }
+    
+    previousCloudToken = cloudToken;
     if (cloudToken) {
         if (self.verboseAvailabilityLogging == YES) NSLog(@"[iCloud] iCloud is available. Ubiquity URL: %@\nUbiquity Token: %@", self.ubiquityContainer, cloudToken);
         
