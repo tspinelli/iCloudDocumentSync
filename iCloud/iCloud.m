@@ -119,7 +119,7 @@
 #pragma mark - Basic
 
 - (BOOL)checkCloudAvailability {
-    static id previousCloudToken = nil;
+    static id previousCloudToken = -1;
     id cloudToken = [self.fileManager ubiquityIdentityToken];
     
     if (previousCloudToken == cloudToken) {
