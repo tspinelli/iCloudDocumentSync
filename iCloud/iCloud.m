@@ -76,10 +76,6 @@
         NSLog(@"[iCloud] Initializing Ubiquity Container");
         
         _ubiquityContainer = [[NSFileManager defaultManager] URLForUbiquityContainerIdentifier:containerID];
-        
-        // Subscribe to changes in iCloud availability (should run on main thread)
-        [_notificationCenter addObserver:self selector:@selector(checkCloudAvailability) name:NSUbiquityIdentityDidChangeNotification object:nil];
-
         if (_ubiquityContainer) {
             // We can write to the ubiquity container
             
@@ -93,7 +89,9 @@
                 // Sync and Update Documents List
                 [self enumerateCloudDocuments];
                 
-                
+                                // Subscribe to changes in iCloud availability (should run on main thread)
+                [_notificationCenter addObserver:self selector:@selector(checkCloudAvailability) name:NSUbiquityIdentityDidChangeNotification object:nil];
+
                 if ([_delegate respondsToSelector:@selector(iCloudDidFinishInitializingWitUbiquityToken: withUbiquityContainer:)])
                     [_delegate iCloudDidFinishInitializingWitUbiquityToken:cloudToken withUbiquityContainer:_ubiquityContainer];
             });
@@ -219,10 +217,10 @@
     
     // Setup iCloud Metadata Query
 	[self.query setSearchScopes:@[NSMetadataQueryUbiquitousDocumentsScope]];
-	[self.query setPredicate:[NSPredicate predicateWithFormat:[NSString stringWithFormat:@"%%K.pathExtension LIKE '%@'", self.fileExtension], NSMetadataItemFSNameKey]];
+//	[self.query setPredicate:[NSPredicate predicateWithFormat:[NSString stringWithFormat:@"%%K.pathExtension LIKE '%@'", self.fileExtension], NSMetadataItemFSNameKey]];
     
     // Notify the responder that an update has begun
-	[self.notificationCenter addObserver:self selector:@selector(startUpdate:) name:NSMetadataQueryDidStartGatheringNotification object:self.query];
+//	[self.notificationCenter addObserver:self selector:@selector(startUpdate:) name:NSMetadataQueryDidStartGatheringNotification object:self.query];
     
     // Notify the responder that an update has been pushed
 	[self.notificationCenter addObserver:self selector:@selector(recievedUpdate:) name:NSMetadataQueryDidUpdateNotification object:self.query];
@@ -262,7 +260,6 @@
 }
 
 - (void)endUpdate:(NSNotification *)notification {
-    // Get the updated files
     [self updateFiles];
     
     // Notify the delegate of the results on the main thread
@@ -304,6 +301,14 @@
                 // Add the file metadata and file names to arrays
                 [discoveredFiles addObject:result];
                 [names addObject:[result valueForAttribute:NSMetadataItemFSNameKey]];
+                
+                if (self.query.resultCount-1 >= idx) {
+                    // Notify the delegate of the results on the main thread
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if ([self.delegate respondsToSelector:@selector(iCloudFilesDidChange:withNewFileNames:)])
+                            [self.delegate iCloudFilesDidChange:discoveredFiles withNewFileNames:names];
+                    });
+                }
             } else if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusNotDownloaded]) {
                 NSError *error;
                 BOOL downloading = [[NSFileManager defaultManager] startDownloadingUbiquitousItemAtURL:fileURL error:&error];
@@ -319,28 +324,35 @@
         // Disable updates to iCloud while we update to avoid errors
         [self.query disableUpdates];
         
+        // The query reports all files found, every time
+        NSArray *queryResults = self.query.results;
+        
         // Log the query results
         if (self.verboseLogging == YES) NSLog(@"Query Results: %@", self.query.results);
         
         // Gather the query results
-        for (NSMetadataItem *result in self.query.results) {
+        for (NSMetadataItem *result in queryResults) {
+            NSURL *fileURL = [result valueForAttribute:NSMetadataItemURLKey];
             [discoveredFiles addObject:result];
-            [names addObject:[result valueForAttribute:NSMetadataItemFSNameKey]];
+        }
+        
+        // Get file names in from the query
+        NSMutableArray *names = [NSMutableArray array];
+        for (NSMetadataItem *item in self.query.results) {
+            [names addObject:[item valueForAttribute:NSMetadataItemFSNameKey]];
         }
         
         // Log query completion
         if (self.verboseLogging == YES) NSLog(@"[iCloud] Finished file update with NSMetadataQuery");
 		
-        // Reenable Updates
-        [self.query enableUpdates];
-    }
-    
     // Notify the delegate of the results on the main thread
-    if ([discoveredFiles count] > 0) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if ([self.delegate respondsToSelector:@selector(iCloudFilesDidChange:withNewFileNames:)])
                 [self.delegate iCloudFilesDidChange:discoveredFiles withNewFileNames:names];
         });
+        
+        // Reenable Updates
+        [self.query enableUpdates];
     }
 }
 
@@ -476,7 +488,6 @@
                     NSURL *localURL = [NSURL fileURLWithPath:[documentsDirectory stringByAppendingPathComponent:localDocuments[item]]];
                     NSError *error;
                     
-                    if (![self.fileManager isUbiquitousItemAtURL:cloudURL]) {
                         BOOL success = [self.fileManager setUbiquitous:YES itemAtURL:localURL destinationURL:cloudURL error:&error];
                         if (success == NO) {
                             NSLog(@"[iCloud] Error while uploading document from local directory: %@",error);
@@ -488,7 +499,7 @@
                                 repeatingHandler(localDocuments[item], nil);
                             });
                         }
-                    }
+                    
                 } else {
                     // Check if the local document is newer than the cloud document
                     // Log conflict
@@ -613,7 +624,6 @@
             NSURL *localURL = [NSURL fileURLWithPath:localDocument];
             NSError *error;
 
-            if (![self.fileManager isUbiquitousItemAtURL:cloudURL]) {
                 BOOL success = [self.fileManager setUbiquitous:YES itemAtURL:localURL destinationURL:cloudURL error:&error];
                 if (!success) {
                     NSLog(@"[iCloud] Error while uploading document from local directory: %@", error);
@@ -627,7 +637,7 @@
                         return;
                     });
                 }
-            }
+            
         } else {
             // Check if the local document is newer than the cloud document
             
