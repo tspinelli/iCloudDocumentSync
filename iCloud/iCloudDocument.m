@@ -90,5 +90,33 @@ NSFileVersion *laterVersion (NSFileVersion *first, NSFileVersion *second) {
     if ([self.delegate respondsToSelector:@selector(iCloudDocumentErrorOccured:)]) [self.delegate iCloudDocumentErrorOccured:error];
 }
 
+- (void) accommodatePresentedItemDeletionWithCompletionHandler: (void (^) (NSError *errorOrNil)) completionHandler
+{
+    UIDocument* presentedDocument = self;
+    [presentedDocument closeWithCompletionHandler: ^(BOOL success) {
+        NSError* error = nil;
+        if (!success)
+        {
+            NSDictionary* userInfo = [NSDictionary dictionaryWithObjectsAndKeys:
+                                      @"Could not close document that is being deleted on another device",
+                                      NSLocalizedDescriptionKey, nil];
+            error = [NSError errorWithDomain: @"some_suitable_domain"
+                                        code: 101
+                                    userInfo: userInfo];
+        }
+        
+        completionHandler(error);  // run the passed in completion handler (required)
+        
+        dispatch_async(dispatch_get_main_queue(), ^
+                       {
+                           //[super accommodatePresentedItemDeletionWithCompletionHandler:completionHandler];
+                           
+                           NSDictionary *userInfo = [NSDictionary dictionaryWithObject:self forKey:@"document"];
+                           [[NSNotificationCenter defaultCenter] postNotificationName: @"documentDeletedOnAnotherDevice"
+                                                                               object: self
+                                                                             userInfo: userInfo];
+                       });
+    }];
+}
 @end
 
