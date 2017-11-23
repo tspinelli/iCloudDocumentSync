@@ -273,28 +273,35 @@
 }
 
 - (void)updateFiles {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0ul), ^{
+    // Log file update
+    if (self.verboseLogging == YES) NSLog(@"[iCloud] Beginning file update with NSMetadataQuery");
+    
+    // Check for iCloud
+    if ([self quickCloudCheck] == NO) return;
+    
+    // Initialize the discovered files and file names array
+    NSMutableArray *discoveredFiles = [NSMutableArray array];
+    NSMutableArray *names = [NSMutableArray array];
 
-        // Log file update
-        if (self.verboseLogging == YES) NSLog(@"[iCloud] Beginning file update with NSMetadataQuery");
-        
-        // Check for iCloud
-        if ([self quickCloudCheck] == NO) return;
-        
-        // Initialize the discovered files and file names array
-        NSMutableArray *discoveredFiles = [NSMutableArray array];
-        NSMutableArray *names = [NSMutableArray array];
-
-        if (@available(iOS 7.0, *)) {        // Code for iOS 7.0 and later
-            // Enumerate through the results
+    if (@available(iOS 7.0, *)) {        // Code for iOS 7.0 and later
+        // Enumerate through the results
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0ul), ^{
             [self.query enumerateResultsUsingBlock:^(id result, NSUInteger idx, BOOL *stop) {
                 // Grab the file URL
                 NSURL *fileURL = [result valueForAttribute:NSMetadataItemURLKey];
                 NSString *fileStatus;
-                [fileURL getResourceValue:&fileStatus forKey:NSURLUbiquitousItemDownloadingStatusKey error:nil];
+                
+                NSError *error;
+                [fileURL getResourceValue:&fileStatus forKey:NSURLUbiquitousItemDownloadingStatusKey error:&error];
+                if (error) {
+                    //If failed to get the resource value of the file, the file should not appear in the 'names' list.
+                    if (self.verboseLogging == YES) NSLog(@"[iCloud] Failed to get resource value with error: %@.", error);
+                    return;
+                }
                 
                 if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusDownloaded]) {
                     // File will be updated soon
+                    return;
                 } else if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusCurrent]) {
                     // Add the file metadata and file names to arrays
                     [discoveredFiles addObject:result];
@@ -302,44 +309,46 @@
                 } else if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusNotDownloaded]) {
                     NSError *error;
                     BOOL downloading = [[NSFileManager defaultManager] startDownloadingUbiquitousItemAtURL:fileURL error:&error];
-                    if (self.verboseLogging == YES) {
-                        NSLog(@"[iCloud] %@ started downloading locally, successful? %@", [fileURL lastPathComponent], downloading ? @"YES" : @"NO");
-                    }
+                    if (self.verboseLogging == YES) NSLog(@"[iCloud] %@ started downloading locally, successful? %@", [fileURL lastPathComponent], downloading ? @"YES" : @"NO");
                     if (error) {
-                        if (self.verboseLogging == YES) {
-                            NSLog(@"[iCloud] Ubiquitous item failed to start downloading with error: %@", error);
-                        }
+                        if (self.verboseLogging == YES) NSLog(@"[iCloud] Ubiquitous item failed to start downloading with error: %@", error);
                     }
                 }
+                // Notify the delegate of the results on the main thread
             }];
-        } else {
-            // Code for iOS 6.1 and earlier
-            
-            // Disable updates to iCloud while we update to avoid errors
-            [self.query disableUpdates];
-            
-            // Log the query results
-            if (self.verboseLogging == YES) NSLog(@"Query Results: %@", self.query.results);
-            
-            // Gather the query results
-            for (NSMetadataItem *result in self.query.results) {
-                [discoveredFiles addObject:result];
-                [names addObject:[result valueForAttribute:NSMetadataItemFSNameKey]];
-            }
-            
-            // Log query completion
-            if (self.verboseLogging == YES) NSLog(@"[iCloud] Finished file update with NSMetadataQuery");
-            
-            // Reenable Updates
-            [self.query enableUpdates];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if ([self.delegate respondsToSelector:@selector(iCloudFilesDidChange:withNewFileNames:)])
+                    [self.delegate iCloudFilesDidChange:discoveredFiles withNewFileNames:names];
+            });
+        });
+    } else {
+        // Code for iOS 6.1 and earlier
+        
+        // Disable updates to iCloud while we update to avoid errors
+        [self.query disableUpdates];
+        
+        // Log the query results
+        if (self.verboseLogging == YES) NSLog(@"Query Results: %@", self.query.results);
+        
+        // Gather the query results
+        for (NSMetadataItem *result in self.query.results) {
+            [discoveredFiles addObject:result];
+            [names addObject:[result valueForAttribute:NSMetadataItemFSNameKey]];
         }
-    
-    // Notify the delegate of the results on the main thread
+        
+        // Log query completion
+        if (self.verboseLogging == YES) NSLog(@"[iCloud] Finished file update with NSMetadataQuery");
+		
+        // Reenable Updates
+        [self.query enableUpdates];
+        // Notify the delegate of the results on the main thread
         dispatch_async(dispatch_get_main_queue(), ^{
             if ([self.delegate respondsToSelector:@selector(iCloudFilesDidChange:withNewFileNames:)])
                 [self.delegate iCloudFilesDidChange:discoveredFiles withNewFileNames:names];
         });
-    });
+    }
+    
+
 }
 
 
@@ -385,28 +394,23 @@
 				// Save and close the document
 				[document closeWithCompletionHandler:^(BOOL closeSuccess) {
 					if (closeSuccess) {
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            // Log
-                            if (self.verboseLogging == YES) NSLog(@"[iCloud] Written, saved and closed document");
-                            
-                            handler(document, document.contents, nil);
-                        });
+						// Log
+						if (self.verboseLogging == YES) NSLog(@"[iCloud] Written, saved and closed document");
+						
+						handler(document, document.contents, nil);
 					} else {
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            NSLog(@"[iCloud] Error while saving document: %s", __PRETTY_FUNCTION__);
-                            NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while saving the document, %@, to iCloud", __PRETTY_FUNCTION__, document.fileURL] code:110 userInfo:@{@"FileURL": fileURL}];
-                            
-                            handler(document, document.contents, error);
-                        });
+						NSLog(@"[iCloud] Error while saving document: %s", __PRETTY_FUNCTION__);
+						NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while saving the document, %@, to iCloud", __PRETTY_FUNCTION__, document.fileURL] code:110 userInfo:@{@"FileURL": fileURL}];
+						
+						handler(document, document.contents, error);
 					}
 				}];
+				
 			} else {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    NSLog(@"[iCloud] Error while writing to the document: %s", __PRETTY_FUNCTION__);
-                    NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while writing to the document, %@, in iCloud", __PRETTY_FUNCTION__, document.fileURL] code:100 userInfo:@{@"FileURL": fileURL}];
-                    
-                    handler(document, document.contents, error);
-                });
+                NSLog(@"[iCloud] Error while writing to the document: %s", __PRETTY_FUNCTION__);
+                NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while writing to the document, %@, in iCloud", __PRETTY_FUNCTION__, document.fileURL] code:100 userInfo:@{@"FileURL": fileURL}];
+                
+                handler(document, document.contents, error);
             }
 		}];
     } else {
@@ -417,27 +421,25 @@
             if (success) {
                 // Saving implicitly opens the file
                 [document closeWithCompletionHandler:^(BOOL closeSuccess) {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        if (closeSuccess) {
-                            // Log the save and close
-                            if (self.verboseLogging == YES) NSLog(@"[iCloud] New document created, saved and closed successfully");
-                            
-                            handler(document, document.contents, nil);
-                        } else {
-                            NSLog(@"[iCloud] Error while saving and closing document: %s", __PRETTY_FUNCTION__);
-                            NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while saving the document, %@, to iCloud", __PRETTY_FUNCTION__, document.fileURL] code:110 userInfo:@{@"FileURL": fileURL}];
-                            
-                            handler(document, document.contents, error);
-                        }
-                    });
+                    if (closeSuccess) {
+                        // Log the save and close
+                        if (self.verboseLogging == YES) NSLog(@"[iCloud] New document created, saved and closed successfully");
+                        
+                        handler(document, document.contents, nil);
+                    } else {
+                        NSLog(@"[iCloud] Error while saving and closing document: %s", __PRETTY_FUNCTION__);
+                        NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while saving the document, %@, to iCloud", __PRETTY_FUNCTION__, document.fileURL] code:110 userInfo:@{@"FileURL": fileURL}];
+                        
+                        handler(document, document.contents, error);
+                    }
                 }];
+                
+                
             } else {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    NSLog(@"[iCloud] Error while creating the document: %s", __PRETTY_FUNCTION__);
-                    NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while creating the document, %@, in iCloud", __PRETTY_FUNCTION__, document.fileURL] code:100 userInfo:@{@"FileURL": fileURL}];
-                    
-                    handler(document, document.contents, error);
-                });
+                NSLog(@"[iCloud] Error while creating the document: %s", __PRETTY_FUNCTION__);
+                NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while creating the document, %@, in iCloud", __PRETTY_FUNCTION__, document.fileURL] code:100 userInfo:@{@"FileURL": fileURL}];
+                
+                handler(document, document.contents, error);
             }
         }];
     }
@@ -457,15 +459,6 @@
         NSMutableArray *localDocuments = [NSMutableArray arrayWithArray:[self.fileManager contentsOfDirectoryAtPath:documentsDirectory error:nil]];
         NSArray *subpaths = [self.fileManager subpathsAtPath:documentsDirectory];
         for (NSString *subpath in subpaths) {
-            if (@available(iOS 8.0, *)) {
-                if ([subpath containsString:@"Database"]) {
-                    continue;
-                }
-            } else {
-                if ([subpath rangeOfString:@"Database"].location == NSNotFound) {
-                    continue;
-                }
-            }
             NSArray *subpathFiles = [self.fileManager contentsOfDirectoryAtPath:[NSString stringWithFormat:@"%@/%@",documentsDirectory,subpath] error:nil];
             for (NSString *file in subpathFiles) {
                 [localDocuments addObject:[NSString stringWithFormat:@"%@/%@",subpath,file]];
@@ -531,24 +524,22 @@
                         // Set the document's new content
                         document.contents = localFileData;
                         
-                        // Save and close the document in iCloud
-                        [document saveToURL:document.fileURL forSaveOperation:UIDocumentSaveForOverwriting completionHandler:^(BOOL success) {
-                            if (success) {
-                                // Close the document
-                                [document closeWithCompletionHandler:^(BOOL closeSuccess) {
-                                    dispatch_async(dispatch_get_main_queue(), ^{
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            // Save and close the document in iCloud
+                            [document saveToURL:document.fileURL forSaveOperation:UIDocumentSaveForOverwriting completionHandler:^(BOOL success) {
+                                if (success) {
+                                    // Close the document
+                                    [document closeWithCompletionHandler:^(BOOL closeSuccess) {
                                         repeatingHandler(localDocuments[item], nil);
-                                    });
-                                }];
-                            } else {
-                                dispatch_async(dispatch_get_main_queue(), ^{
+                                    }];
+                                } else {
                                     NSLog(@"[iCloud] Error while overwriting old iCloud file: %s", __PRETTY_FUNCTION__);
                                     NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while saving the document, %@, to iCloud", __PRETTY_FUNCTION__, document.fileURL] code:110 userInfo:@{@"FileName": localDocuments[item]}];
                                     
                                     repeatingHandler(localDocuments[item], error);
-                                });
-                            }
-                        }];
+                                }
+                            }];
+                        });
                     } else {
                         NSLog(@"[iCloud] The local file and iCloud file have the same modification date. Before overwriting or deleting, iCloud Document Sync will check if both files have the same content.");
                         if ([self.fileManager contentsEqualAtPath:[cloudFileURL absoluteString] andPath:[localFileURL absoluteString]] == YES) {
@@ -673,27 +664,24 @@
                 // Set the document's new content
                 document.contents = localFileData;
                 
-//                dispatch_async(dispatch_get_main_queue(), ^{
+                dispatch_async(dispatch_get_main_queue(), ^{
                     // Save and close the document in iCloud
                     [document saveToURL:document.fileURL forSaveOperation:UIDocumentSaveForOverwriting completionHandler:^(BOOL success) {
                         if (success) {
                             // Close the document
                             [document closeWithCompletionHandler:^(BOOL closeSuccess) {
-                                dispatch_async(dispatch_get_main_queue(), ^{
-                                    handler(nil);
-                                });
+                                handler(nil);
                                 return;
                             }];
                         } else {
                             NSLog(@"[iCloud] Error while overwriting old iCloud file: %s", __PRETTY_FUNCTION__);
                             NSError *error = [NSError errorWithDomain:[NSString stringWithFormat:@"%s error while saving the document, %@, to iCloud", __PRETTY_FUNCTION__, document.fileURL] code:110 userInfo:@{@"FileName": localDocument}];
-                            dispatch_async(dispatch_get_main_queue(), ^{
-                                handler(error);
-                            });
+                            
+                            handler(error);
                             return;
                         }
                     }];
-//                });
+                });
             } else {
                 NSLog(@"[iCloud] The local file and iCloud file have the same modification date. Before overwriting or deleting, iCloud Document Sync will check if both files have the same content.");
                 if ([self.fileManager contentsEqualAtPath:[cloudURL absoluteString] andPath:[localURL absoluteString]] == YES) {
