@@ -273,70 +273,71 @@
 }
 
 - (void)updateFiles {
-    // Log file update
-    if (self.verboseLogging == YES) NSLog(@"[iCloud] Beginning file update with NSMetadataQuery");
-    
-    // Check for iCloud
-    if ([self quickCloudCheck] == NO) return;
-    
-    // Initialize the discovered files and file names array
-    NSMutableArray *discoveredFiles = [NSMutableArray array];
-    NSMutableArray *names = [NSMutableArray array];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0ul), ^{
 
-    if ([self.query respondsToSelector:@selector(enumerateResultsUsingBlock:)]) {
-        // Code for iOS 7.0 and later
+        // Log file update
+        if (self.verboseLogging == YES) NSLog(@"[iCloud] Beginning file update with NSMetadataQuery");
         
-        // Enumerate through the results
-        [self.query enumerateResultsUsingBlock:^(id result, NSUInteger idx, BOOL *stop) {
-            // Grab the file URL
-            NSURL *fileURL = [result valueForAttribute:NSMetadataItemURLKey];
-            NSString *fileStatus;
-            [fileURL getResourceValue:&fileStatus forKey:NSURLUbiquitousItemDownloadingStatusKey error:nil];
+        // Check for iCloud
+        if ([self quickCloudCheck] == NO) return;
+        
+        // Initialize the discovered files and file names array
+        NSMutableArray *discoveredFiles = [NSMutableArray array];
+        NSMutableArray *names = [NSMutableArray array];
+
+        if (@available(iOS 7.0, *)) {        // Code for iOS 7.0 and later
+            // Enumerate through the results
+            [self.query enumerateResultsUsingBlock:^(id result, NSUInteger idx, BOOL *stop) {
+                // Grab the file URL
+                NSURL *fileURL = [result valueForAttribute:NSMetadataItemURLKey];
+                NSString *fileStatus;
+                [fileURL getResourceValue:&fileStatus forKey:NSURLUbiquitousItemDownloadingStatusKey error:nil];
+                
+                if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusDownloaded]) {
+                    // File will be updated soon
+                }
+                
+                if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusCurrent]) {
+                    // Add the file metadata and file names to arrays
+                    [discoveredFiles addObject:result];
+                    [names addObject:[result valueForAttribute:NSMetadataItemFSNameKey]];
+                } else if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusNotDownloaded]) {
+                    NSError *error;
+                    BOOL downloading = [[NSFileManager defaultManager] startDownloadingUbiquitousItemAtURL:fileURL error:&error];
+                    if (self.verboseLogging == YES) NSLog(@"[iCloud] %@ started downloading locally, successful? %@", [fileURL lastPathComponent], downloading ? @"YES" : @"NO");
+                    if (error) {
+                        if (self.verboseLogging == YES) NSLog(@"[iCloud] Ubiquitous item failed to start downloading with error: %@", error);
+                    }
+                }
+            }];
+        } else {
+            // Code for iOS 6.1 and earlier
             
-            if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusDownloaded]) {
-                // File will be updated soon
-            }
+            // Disable updates to iCloud while we update to avoid errors
+            [self.query disableUpdates];
             
-            if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusCurrent]) {
-                // Add the file metadata and file names to arrays
+            // Log the query results
+            if (self.verboseLogging == YES) NSLog(@"Query Results: %@", self.query.results);
+            
+            // Gather the query results
+            for (NSMetadataItem *result in self.query.results) {
                 [discoveredFiles addObject:result];
                 [names addObject:[result valueForAttribute:NSMetadataItemFSNameKey]];
-            } else if ([fileStatus isEqualToString:NSURLUbiquitousItemDownloadingStatusNotDownloaded]) {
-                NSError *error;
-                BOOL downloading = [[NSFileManager defaultManager] startDownloadingUbiquitousItemAtURL:fileURL error:&error];
-                if (self.verboseLogging == YES) NSLog(@"[iCloud] %@ started downloading locally, successful? %@", [fileURL lastPathComponent], downloading ? @"YES" : @"NO");
-                if (error) {
-                    if (self.verboseLogging == YES) NSLog(@"[iCloud] Ubiquitous item failed to start downloading with error: %@", error);
-                }
             }
-        }];
-    } else {
-        // Code for iOS 6.1 and earlier
-        
-        // Disable updates to iCloud while we update to avoid errors
-        [self.query disableUpdates];
-        
-        // Log the query results
-        if (self.verboseLogging == YES) NSLog(@"Query Results: %@", self.query.results);
-        
-        // Gather the query results
-        for (NSMetadataItem *result in self.query.results) {
-            [discoveredFiles addObject:result];
-            [names addObject:[result valueForAttribute:NSMetadataItemFSNameKey]];
+            
+            // Log query completion
+            if (self.verboseLogging == YES) NSLog(@"[iCloud] Finished file update with NSMetadataQuery");
+            
+            // Reenable Updates
+            [self.query enableUpdates];
         }
-        
-        // Log query completion
-        if (self.verboseLogging == YES) NSLog(@"[iCloud] Finished file update with NSMetadataQuery");
-		
-        // Reenable Updates
-        [self.query enableUpdates];
-    }
     
     // Notify the delegate of the results on the main thread
         dispatch_async(dispatch_get_main_queue(), ^{
             if ([self.delegate respondsToSelector:@selector(iCloudFilesDidChange:withNewFileNames:)])
                 [self.delegate iCloudFilesDidChange:discoveredFiles withNewFileNames:names];
         });
+    });
 }
 
 
@@ -447,6 +448,15 @@
         NSMutableArray *localDocuments = [NSMutableArray arrayWithArray:[self.fileManager contentsOfDirectoryAtPath:documentsDirectory error:nil]];
         NSArray *subpaths = [self.fileManager subpathsAtPath:documentsDirectory];
         for (NSString *subpath in subpaths) {
+            if (@available(iOS 8.0, *)) {
+                if ([subpath containsString:@"Database"]) {
+                    continue;
+                }
+            } else {
+                if ([subpath rangeOfString:@"Database"].location == NSNotFound) {
+                    continue;
+                }
+            }
             NSArray *subpathFiles = [self.fileManager contentsOfDirectoryAtPath:[NSString stringWithFormat:@"%@/%@",documentsDirectory,subpath] error:nil];
             for (NSString *file in subpathFiles) {
                 [localDocuments addObject:[NSString stringWithFormat:@"%@/%@",subpath,file]];
