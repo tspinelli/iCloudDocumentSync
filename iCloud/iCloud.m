@@ -459,6 +459,9 @@
         NSMutableArray *localDocuments = [NSMutableArray arrayWithArray:[self.fileManager contentsOfDirectoryAtPath:documentsDirectory error:nil]];
         NSArray *subpaths = [self.fileManager subpathsAtPath:documentsDirectory];
         for (NSString *subpath in subpaths) {
+            if ([subpath containsString:@"Database"]) {
+                continue;
+            }
             NSArray *subpathFiles = [self.fileManager contentsOfDirectoryAtPath:[NSString stringWithFormat:@"%@/%@",documentsDirectory,subpath] error:nil];
             for (NSString *file in subpathFiles) {
                 [localDocuments addObject:[NSString stringWithFormat:@"%@/%@",subpath,file]];
