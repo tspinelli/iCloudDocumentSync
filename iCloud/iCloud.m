@@ -486,17 +486,22 @@
                     NSURL *localURL = [NSURL fileURLWithPath:[documentsDirectory stringByAppendingPathComponent:localDocuments[item]]];
                     NSError *error;
                     
-                        BOOL success = [self.fileManager setUbiquitous:YES itemAtURL:localURL destinationURL:cloudURL error:&error];
-                        if (success == NO) {
-                            NSLog(@"[iCloud] Error while uploading document from local directory: %@",error);
-                            dispatch_async(dispatch_get_main_queue(), ^{
-                                repeatingHandler(localDocuments[item], error);
-                            });
-                        } else {
-                            dispatch_async(dispatch_get_main_queue(), ^{
-                                repeatingHandler(localDocuments[item], nil);
-                            });
-                        }
+                    BOOL success = false;
+                    if ([localDocuments[item] containsString:@"Database"] || [localDocuments[item] containsString:@"Db"]) {
+                        success = [self.fileManager setUbiquitous:NO itemAtURL:localURL destinationURL:cloudURL error:&error];
+                    } else {
+                        success = [self.fileManager setUbiquitous:YES itemAtURL:localURL destinationURL:cloudURL error:&error];
+                    }
+                    if (success == NO) {
+                        NSLog(@"[iCloud] Error while uploading document from local directory: %@",error);
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            repeatingHandler(localDocuments[item], error);
+                        });
+                    } else {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            repeatingHandler(localDocuments[item], nil);
+                        });
+                    }
                     
                 } else {
                     // Check if the local document is newer than the cloud document
@@ -591,6 +596,10 @@
 - (void)uploadLocalDocumentToCloudWithName:(NSString *)documentName completion:(void (^)(NSError *error))handler {
     // Log download
     if (self.verboseLogging == YES) NSLog(@"[iCloud] Attempting to upload document, %@", documentName);
+    
+    if ([documentName containsString:@"Database"] || [documentName containsString:@"Db"]) {
+        return;
+    }
     
     // Check for iCloud
     if ([self quickCloudCheck] == NO) return;
