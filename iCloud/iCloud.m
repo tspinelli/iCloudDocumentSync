@@ -457,6 +457,9 @@
         // Get the array of files in the documents directory
         NSString *documentsDirectory = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
         NSMutableArray *localDocuments = [NSMutableArray arrayWithArray:[self.fileManager contentsOfDirectoryAtPath:documentsDirectory error:nil]];
+        NSPredicate *predicate = [NSPredicate predicateWithFormat:@"NOT SELF contains[c] %@ AND NOT SELF contains[c] %@",@"Db",@"Database"]; // if you need case sensitive search avoid '[c]' in the predicate
+        localDocuments = [NSMutableArray arrayWithArray:[localDocuments filteredArrayUsingPredicate:predicate]];
+
         NSArray *subpaths = [self.fileManager subpathsAtPath:documentsDirectory];
         for (NSString *subpath in subpaths) {
             if ([subpath containsString:@"Database"] || [subpath containsString:@"Db"]) {
@@ -464,9 +467,6 @@
             }
             NSArray *subpathFiles = [self.fileManager contentsOfDirectoryAtPath:[NSString stringWithFormat:@"%@/%@",documentsDirectory,subpath] error:nil];
             for (NSString *file in subpathFiles) {
-                if ([file containsString:@"Database"] || [file containsString:@"Db"]) {
-                    continue;
-                }
                 [localDocuments addObject:[NSString stringWithFormat:@"%@/%@",subpath,file]];
             }
         }
