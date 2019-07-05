@@ -75,8 +75,8 @@
     dispatch_async(dispatch_get_global_queue (DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(void) {
         NSLog(@"[iCloud] Initializing Ubiquity Container");
         
-        _ubiquityContainer = [[NSFileManager defaultManager] URLForUbiquityContainerIdentifier:containerID];
-        if (_ubiquityContainer) {
+        self->_ubiquityContainer = [[NSFileManager defaultManager] URLForUbiquityContainerIdentifier:containerID];
+        if (self->_ubiquityContainer) {
             // We can write to the ubiquity container
             
             dispatch_async(dispatch_get_main_queue (), ^(void) {
@@ -84,16 +84,16 @@
                 NSLog(@"[iCloud] Initializing Document Enumeration");
                 
                 // Check iCloud Availability
-                id cloudToken = [_fileManager ubiquityIdentityToken];
+                id cloudToken = [self->_fileManager ubiquityIdentityToken];
                 
                 // Sync and Update Documents List
                 [self enumerateCloudDocuments];
                 
                                 // Subscribe to changes in iCloud availability (should run on main thread)
-                [_notificationCenter addObserver:self selector:@selector(checkCloudAvailability) name:NSUbiquityIdentityDidChangeNotification object:nil];
+                [self->_notificationCenter addObserver:self selector:@selector(checkCloudAvailability) name:NSUbiquityIdentityDidChangeNotification object:nil];
 
-                if ([_delegate respondsToSelector:@selector(iCloudDidFinishInitializingWitUbiquityToken: withUbiquityContainer:)])
-                    [_delegate iCloudDidFinishInitializingWitUbiquityToken:cloudToken withUbiquityContainer:_ubiquityContainer];
+                if ([self->_delegate respondsToSelector:@selector(iCloudDidFinishInitializingWitUbiquityToken: withUbiquityContainer:)])
+                    [self->_delegate iCloudDidFinishInitializingWitUbiquityToken:cloudToken withUbiquityContainer:self->_ubiquityContainer];
             });
             
             // Log the setup
