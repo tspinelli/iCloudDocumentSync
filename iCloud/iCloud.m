@@ -260,7 +260,7 @@
 }
 
 - (void)endUpdate:(NSNotification *)notification {
-    [self updateFiles];
+//    [self updateFiles];
     
     // Notify the delegate of the results on the main thread
     dispatch_async(dispatch_get_main_queue(), ^{
