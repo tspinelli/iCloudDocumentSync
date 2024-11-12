@@ -798,7 +798,7 @@
                         return;
                     }
                 }];
-            } else if (document.documentState & UIDocumentStateNormal) {
+            } else if (document.documentState == UIDocumentStateNormal) {
                 // Log open
                 if (self.verboseLogging == YES) NSLog(@"[iCloud] Document already opened, retrieving content");
                 
